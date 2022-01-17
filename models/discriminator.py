@@ -224,12 +224,15 @@ class Discriminator(nn.Module):
     def forward(self, input):
         input = self.dwt(input)
         out = None
+        outs = []
 
         for from_rgb, conv in zip(self.from_rgbs, self.convs):
             input, out = from_rgb(input, out)
             out = conv(out)
+            # outs.append(out)
 
         _, out = self.from_rgbs[-1](input, out)
+        outs.append(out)
 
         batch, channel, height, width = out.shape
         group = min(batch, self.stddev_group)
@@ -240,10 +243,12 @@ class Discriminator(nn.Module):
         stddev = stddev.mean([2, 3, 4], keepdims=True).squeeze(2)
         stddev = stddev.repeat(group, 1, height, width)
         out = torch.cat([out, stddev], 1)
+        outs.append(out)
 
         out = self.final_conv(out)
+        outs.append(out)
 
         out = out.view(batch, -1)
         out = self.final_linear(out)
 
-        return out
+        return out, outs
