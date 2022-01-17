@@ -8,7 +8,7 @@ import torch.utils.checkpoint as checkpoint
 from timm.models.layers import to_2tuple, trunc_normal_
 from torch import nn
 
-from models.basic_layers import (EqualLinear, PixelNorm,
+from .basic_layers import (EqualLinear, PixelNorm,
                                  SinusoidalPositionalEmbedding, Upsample)
 
 
@@ -594,6 +594,7 @@ class Generator(nn.Module):
     def forward(
         self,
         noise,
+        latent,
         return_latents=False,
         inject_index=None,
         truncation=1,
@@ -611,10 +612,10 @@ class Generator(nn.Module):
 
             styles = torch.cat(style_t, dim=0)
         
-        if styles.ndim < 3:
-            latent = styles.unsqueeze(1).repeat(1, inject_index, 1)
-        else:
-            latent = styles
+        if latent.ndim < 3:
+            latent = latent.unsqueeze(1).repeat(1, inject_index, 1)
+        # else:
+        #     latent = styles
 
         x = self.input(latent)
         B, C, H, W = x.shape

@@ -4,12 +4,12 @@
 import math
 
 import torch
-from op import FusedLeakyReLU, upfirdn2d
+from .op import FusedLeakyReLU, upfirdn2d
 from torch import nn
 from torch.nn import functional as F
 from torch.nn.utils import spectral_norm
 
-from models.basic_layers import (Blur, Downsample, EqualConv2d, EqualLinear,
+from .basic_layers import (Blur, Downsample, EqualConv2d, EqualLinear,
                                  ScaledLeakyReLU)
 
 
