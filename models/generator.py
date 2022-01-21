@@ -9,7 +9,7 @@ from timm.models.layers import to_2tuple, trunc_normal_
 from torch import nn
 
 from .basic_layers import (EqualLinear, PixelNorm,
-                                 SinusoidalPositionalEmbedding, Upsample)
+                           SinusoidalPositionalEmbedding, Upsample)
 
 
 class ToRGB(nn.Module):
@@ -34,19 +34,21 @@ class ToRGB(nn.Module):
 
             out = out + skip
         return out
-    
+
     def flops(self):
         m = self.conv
         kernel_ops = torch.zeros(m.weight.size()[2:]).numel()  # Kw x Kh
         bias_ops = 1
         # N x Cout x H x W x  (Cin x Kw x Kh + bias)
-        flops = 1 * self.resolution * self.resolution * 3 * (m.in_channels // m.groups * kernel_ops + bias_ops)
+        flops = 1 * self.resolution * self.resolution * 3 * \
+            (m.in_channels // m.groups * kernel_ops + bias_ops)
         if self.is_upsample:
             # there is a conv used in upsample
             w_shape = (1, 1, 4, 4)
             kernel_ops = torch.zeros(w_shape[2:]).numel()  # Kw x Kh
             # N x Cout x H x W x  (Cin x Kw x Kh + bias)
-            flops = 1 * 3 * self.resolution * self.resolution * (3 * kernel_ops)
+            flops = 1 * 3 * self.resolution * \
+                self.resolution * (3 * kernel_ops)
         return flops
 
 
@@ -80,8 +82,10 @@ def window_partition(x, window_size):
         windows: (num_windows*B, window_size, window_size, C)
     """
     B, H, W, C = x.shape
-    x = x.view(B, H // window_size, window_size, W // window_size, window_size, C)
-    windows = x.permute(0, 1, 3, 2, 4, 5).contiguous().view(-1, window_size, window_size, C)
+    x = x.view(B, H // window_size, window_size,
+               W // window_size, window_size, C)
+    windows = x.permute(0, 1, 3, 2, 4, 5).contiguous(
+    ).view(-1, window_size, window_size, C)
     return windows
 
 
@@ -97,7 +101,8 @@ def window_reverse(windows, window_size, H, W):
         x: (B, H, W, C)
     """
     B = int(windows.shape[0] / (H * W / window_size / window_size))
-    x = windows.view(B, H // window_size, W // window_size, window_size, window_size, -1)
+    x = windows.view(B, H // window_size, W // window_size,
+                     window_size, window_size, -1)
     x = x.permute(0, 1, 3, 2, 4, 5).contiguous().view(B, H, W, -1)
     return x
 
@@ -134,13 +139,17 @@ class WindowAttention(nn.Module):
         coords_w = torch.arange(self.window_size[1])
         coords = torch.stack(torch.meshgrid([coords_h, coords_w]))  # 2, Wh, Ww
         coords_flatten = torch.flatten(coords, 1)  # 2, Wh*Ww
-        relative_coords = coords_flatten[:, :, None] - coords_flatten[:, None, :]  # 2, Wh*Ww, Wh*Ww
-        relative_coords = relative_coords.permute(1, 2, 0).contiguous()  # Wh*Ww, Wh*Ww, 2
-        relative_coords[:, :, 0] += self.window_size[0] - 1  # shift to start from 0
+        relative_coords = coords_flatten[:, :, None] - \
+            coords_flatten[:, None, :]  # 2, Wh*Ww, Wh*Ww
+        relative_coords = relative_coords.permute(
+            1, 2, 0).contiguous()  # Wh*Ww, Wh*Ww, 2
+        relative_coords[:, :, 0] += self.window_size[0] - \
+            1  # shift to start from 0
         relative_coords[:, :, 1] += self.window_size[1] - 1
         relative_coords[:, :, 0] *= 2 * self.window_size[1] - 1
         relative_position_index = relative_coords.sum(-1)  # Wh*Ww, Wh*Ww
-        self.register_buffer("relative_position_index", relative_position_index)
+        self.register_buffer("relative_position_index",
+                             relative_position_index)
         trunc_normal_(self.relative_position_bias_table, std=.02)
 
         self.attn_drop = nn.Dropout(attn_drop)
@@ -156,21 +165,26 @@ class WindowAttention(nn.Module):
             mask: (0/-inf) mask with shape of (num_windows, Wh*Ww, Wh*Ww) or None
         """
         B_, N, C = q.shape
-        q = q.reshape(B_, N, self.num_heads, C // self.num_heads).permute(0, 2, 1, 3)
-        k = k.reshape(B_, N, self.num_heads, C // self.num_heads).permute(0, 2, 1, 3)
-        v = v.reshape(B_, N, self.num_heads, C // self.num_heads).permute(0, 2, 1, 3)
+        q = q.reshape(B_, N, self.num_heads, C //
+                      self.num_heads).permute(0, 2, 1, 3)
+        k = k.reshape(B_, N, self.num_heads, C //
+                      self.num_heads).permute(0, 2, 1, 3)
+        v = v.reshape(B_, N, self.num_heads, C //
+                      self.num_heads).permute(0, 2, 1, 3)
 
         q = q * self.scale
         attn = (q @ k.transpose(-2, -1))
 
         relative_position_bias = self.relative_position_bias_table[self.relative_position_index.view(-1)].view(
             self.window_size[0] * self.window_size[1], self.window_size[0] * self.window_size[1], -1)  # Wh*Ww,Wh*Ww,nH
-        relative_position_bias = relative_position_bias.permute(2, 0, 1).contiguous()  # nH, Wh*Ww, Wh*Ww
+        relative_position_bias = relative_position_bias.permute(
+            2, 0, 1).contiguous()  # nH, Wh*Ww, Wh*Ww
         attn = attn + relative_position_bias.unsqueeze(0)
 
         if mask is not None:
             nW = mask.shape[0]
-            attn = attn.view(B_ // nW, nW, self.num_heads, N, N) + mask.unsqueeze(1).unsqueeze(0)
+            attn = attn.view(B_ // nW, nW, self.num_heads, N,
+                             N) + mask.unsqueeze(1).unsqueeze(0)
             attn = attn.view(-1, self.num_heads, N, N)
             attn = self.softmax(attn)
         else:
@@ -178,7 +192,7 @@ class WindowAttention(nn.Module):
 
         attn = self.attn_drop(attn)
         x = (attn @ v).transpose(1, 2).reshape(B_, N, C)
-        
+
         return x
 
     def extra_repr(self) -> str:
@@ -260,7 +274,7 @@ class StyleSwinTransformerBlock(nn.Module):
                 dim // 2, window_size=to_2tuple(self.window_size), num_heads=num_heads // 2,
                 qk_scale=qk_scale, attn_drop=attn_drop),
         ])
-        
+
         attn_mask1 = None
         attn_mask2 = None
         if self.shift_size > 0:
@@ -282,63 +296,74 @@ class StyleSwinTransformerBlock(nn.Module):
             # nW, window_size, window_size, 1
             mask_windows = window_partition(img_mask, self.window_size)
             mask_windows = mask_windows.view(-1,
-                                            self.window_size * self.window_size)
+                                             self.window_size * self.window_size)
             attn_mask2 = mask_windows.unsqueeze(1) - mask_windows.unsqueeze(2)
             attn_mask2 = attn_mask2.masked_fill(
                 attn_mask2 != 0, float(-100.0)).masked_fill(attn_mask2 == 0, float(0.0))
-        
+
         self.register_buffer("attn_mask1", attn_mask1)
         self.register_buffer("attn_mask2", attn_mask2)
 
         self.norm2 = AdaptiveInstanceNorm(dim, style_dim)
         mlp_hidden_dim = int(dim * mlp_ratio)
-        self.mlp = Mlp(in_features=dim, hidden_features=mlp_hidden_dim, act_layer=act_layer, drop=drop)
+        self.mlp = Mlp(in_features=dim, hidden_features=mlp_hidden_dim,
+                       act_layer=act_layer, drop=drop)
 
     def forward(self, x, style):
         H, W = self.input_resolution
         B, L, C = x.shape
         assert L == H * W, "input feature has wrong size"
-        
+
         # Double Attn
         shortcut = x
         x = self.norm1(x.transpose(-1, -2), style).transpose(-1, -2)
-        
-        qkv = self.qkv(x).reshape(B, -1, 3, C).permute(2, 0, 1, 3).reshape(3 * B, H, W, C)
+
+        qkv = self.qkv(x).reshape(B, -1, 3, C).permute(2,
+                                                       0, 1, 3).reshape(3 * B, H, W, C)
         qkv_1 = qkv[:, :, :, : C // 2].reshape(3, B, H, W, C // 2)
         if self.shift_size > 0:
-            qkv_2 = torch.roll(qkv[:, :, :, C // 2:], shifts=(-self.shift_size, -self.shift_size), dims=(1, 2)).reshape(3, B, H, W, C // 2)
+            qkv_2 = torch.roll(qkv[:, :, :, C // 2:], shifts=(-self.shift_size, -
+                               self.shift_size), dims=(1, 2)).reshape(3, B, H, W, C // 2)
         else:
             qkv_2 = qkv[:, :, :, C // 2:].reshape(3, B, H, W, C // 2)
-        
+
         q1_windows, k1_windows, v1_windows = self.get_window_qkv(qkv_1)
         q2_windows, k2_windows, v2_windows = self.get_window_qkv(qkv_2)
 
         x1 = self.attn[0](q1_windows, k1_windows, v1_windows, self.attn_mask1)
         x2 = self.attn[1](q2_windows, k2_windows, v2_windows, self.attn_mask2)
-        
-        x1 = window_reverse(x1.view(-1, self.window_size * self.window_size, C // 2), self.window_size, H, W)
-        x2 = window_reverse(x2.view(-1, self.window_size * self.window_size, C // 2), self.window_size, H, W)
+
+        x1 = window_reverse(x1.view(-1, self.window_size *
+                            self.window_size, C // 2), self.window_size, H, W)
+        x2 = window_reverse(x2.view(-1, self.window_size *
+                            self.window_size, C // 2), self.window_size, H, W)
 
         if self.shift_size > 0:
-            x2 = torch.roll(x2, shifts=(self.shift_size, self.shift_size), dims=(1, 2))
+            x2 = torch.roll(x2, shifts=(self.shift_size,
+                            self.shift_size), dims=(1, 2))
         else:
             x2 = x2
 
-        x = torch.cat([x1.reshape(B, H * W, C // 2), x2.reshape(B, H * W, C // 2)], dim=2)
+        x = torch.cat([x1.reshape(B, H * W, C // 2),
+                      x2.reshape(B, H * W, C // 2)], dim=2)
         x = self.proj(x)
 
         # FFN
         x = shortcut + x
-        x = x + self.mlp(self.norm2(x.transpose(-1, -2), style).transpose(-1, -2))
+        x = x + self.mlp(self.norm2(x.transpose(-1, -2),
+                         style).transpose(-1, -2))
 
         return x
-    
+
     def get_window_qkv(self, qkv):
         q, k, v = qkv[0], qkv[1], qkv[2]   # B, H, W, C
         C = q.shape[-1]
-        q_windows = window_partition(q, self.window_size).view(-1, self.window_size * self.window_size, C)  # nW*B, window_size*window_size, C
-        k_windows = window_partition(k, self.window_size).view(-1, self.window_size * self.window_size, C)  # nW*B, window_size*window_size, C
-        v_windows = window_partition(v, self.window_size).view(-1, self.window_size * self.window_size, C)  # nW*B, window_size*window_size, C
+        q_windows = window_partition(q, self.window_size).view(
+            -1, self.window_size * self.window_size, C)  # nW*B, window_size*window_size, C
+        k_windows = window_partition(k, self.window_size).view(
+            -1, self.window_size * self.window_size, C)  # nW*B, window_size*window_size, C
+        v_windows = window_partition(v, self.window_size).view(
+            -1, self.window_size * self.window_size, C)  # nW*B, window_size*window_size, C
         return q_windows, k_windows, v_windows
 
     def extra_repr(self) -> str:
@@ -383,7 +408,7 @@ class StyleBasicLayer(nn.Module):
     """
 
     def __init__(self, dim, input_resolution, depth, num_heads, window_size, out_dim=None,
-                 mlp_ratio=4., qkv_bias=True, qk_scale=None, drop=0., attn_drop=0., upsample=None, 
+                 mlp_ratio=4., qkv_bias=True, qk_scale=None, drop=0., attn_drop=0., upsample=None,
                  use_checkpoint=False, style_dim=512):
 
         super().__init__()
@@ -395,13 +420,14 @@ class StyleBasicLayer(nn.Module):
         # build blocks
         self.blocks = nn.ModuleList([
             StyleSwinTransformerBlock(dim=dim, input_resolution=input_resolution,
-                                 num_heads=num_heads, window_size=window_size,
-                                 mlp_ratio=mlp_ratio, qkv_bias=qkv_bias, qk_scale=qk_scale,
-                                 drop=drop, attn_drop=attn_drop, style_dim=style_dim)
+                                      num_heads=num_heads, window_size=window_size,
+                                      mlp_ratio=mlp_ratio, qkv_bias=qkv_bias, qk_scale=qk_scale,
+                                      drop=drop, attn_drop=attn_drop, style_dim=style_dim)
             for _ in range(depth)])
 
         if upsample is not None:
-            self.upsample = upsample(input_resolution, dim=dim, out_dim=out_dim)
+            self.upsample = upsample(
+                input_resolution, dim=dim, out_dim=out_dim)
         else:
             self.upsample = None
 
@@ -448,7 +474,8 @@ class BilinearUpsample(nn.Module):
         self.dim = dim
         self.out_dim = out_dim
         self.alpha = nn.Parameter(torch.zeros(1))
-        self.sin_pos_embed = SinusoidalPositionalEmbedding(embedding_dim=out_dim // 2, padding_idx=0, init_size=out_dim // 2)
+        self.sin_pos_embed = SinusoidalPositionalEmbedding(
+            embedding_dim=out_dim // 2, padding_idx=0, init_size=out_dim // 2)
 
     def forward(self, x):
         """
@@ -466,10 +493,11 @@ class BilinearUpsample(nn.Module):
         x = self.norm(x)
         x = self.reduction(x)
 
-        # Add SPE    
+        # Add SPE
         x = x.reshape(B, H * 2, W * 2, self.out_dim).permute(0, 3, 1, 2)
         x += self.sin_pos_embed.make_grid2d(H * 2, W * 2, B) * self.alpha
-        x = x.permute(0, 2, 3, 1).contiguous().view(B, H * 2 * W * 2, self.out_dim)
+        x = x.permute(0, 2, 3, 1).contiguous().view(
+            B, H * 2 * W * 2, self.out_dim)
         return x
 
     def extra_repr(self) -> str:
@@ -482,7 +510,8 @@ class BilinearUpsample(nn.Module):
         # proj
         flops += H * W * self.dim * (self.out_dim)
         # bilinear
-        flops += 4 * self.input_resolution[0] * self.input_resolution[1] * self.dim * 5
+        flops += 4 * self.input_resolution[0] * \
+            self.input_resolution[1] * self.dim * 5
         return flops
 
 
@@ -518,7 +547,7 @@ class Generator(nn.Module):
         self.style_dim = style_dim
         self.size = size
         self.mlp_ratio = mlp_ratio
-        
+
         layers = [PixelNorm()]
         for _ in range(n_mlp):
             layers.append(
@@ -531,45 +560,51 @@ class Generator(nn.Module):
         start = 2
         depths = [2, 2, 2, 2, 2, 2, 2, 2, 2]
         in_channels = [
-            512, 
-            512, 
-            512, 
-            512, 
-            256 * channel_multiplier, 
-            128 * channel_multiplier, 
-            64 * channel_multiplier, 
-            32 * channel_multiplier, 
+            512,
+            512,
+            512,
+            512,
+            256 * channel_multiplier,
+            128 * channel_multiplier,
+            64 * channel_multiplier,
+            32 * channel_multiplier,
             16 * channel_multiplier
-        ]  
+        ]
 
         end = int(math.log(size, 2))
         num_heads = [max(c // 32, 4) for c in in_channels]
         full_resolution_index = int(math.log(enable_full_resolution, 2))
-        window_sizes = [2 ** i if i <= full_resolution_index else 8 for i in range(start, end + 1)]
+        window_sizes = [
+            2 ** i if i <= full_resolution_index else 8 for i in range(start, end + 1)]
 
         self.input = ConstantInput(in_channels[0])
         self.layers = nn.ModuleList()
         self.to_rgbs = nn.ModuleList()
         num_layers = 0
-        
+
         for i_layer in range(start, end + 1):
             in_channel = in_channels[i_layer - start]
             layer = StyleBasicLayer(dim=in_channel,
-                               input_resolution=(2 ** i_layer,2 ** i_layer),
-                               depth=depths[i_layer - start],
-                               num_heads=num_heads[i_layer - start],
-                               window_size=window_sizes[i_layer - start],
-                               out_dim=in_channels[i_layer - start + 1] if (i_layer < end) else None,
-                               mlp_ratio=self.mlp_ratio,
-                               qkv_bias=qkv_bias, qk_scale=qk_scale,
-                               drop=drop_rate, attn_drop=attn_drop_rate,
-                               upsample=BilinearUpsample if (i_layer < end) else None,
-                               use_checkpoint=use_checkpoint, style_dim=style_dim)
+                                    input_resolution=(
+                                        2 ** i_layer, 2 ** i_layer),
+                                    depth=depths[i_layer - start],
+                                    num_heads=num_heads[i_layer - start],
+                                    window_size=window_sizes[i_layer - start],
+                                    out_dim=in_channels[i_layer - start +
+                                                        1] if (i_layer < end) else None,
+                                    mlp_ratio=self.mlp_ratio,
+                                    qkv_bias=qkv_bias, qk_scale=qk_scale,
+                                    drop=drop_rate, attn_drop=attn_drop_rate,
+                                    upsample=BilinearUpsample if (
+                                        i_layer < end) else None,
+                                    use_checkpoint=use_checkpoint, style_dim=style_dim)
             self.layers.append(layer)
 
-            out_dim = in_channels[i_layer - start + 1] if (i_layer < end) else in_channels[i_layer - start]
+            out_dim = in_channels[i_layer - start +
+                                  1] if (i_layer < end) else in_channels[i_layer - start]
             upsample = True if (i_layer < end) else False
-            to_rgb = ToRGB(out_dim, upsample=upsample, resolution=(2 ** i_layer))
+            to_rgb = ToRGB(out_dim, upsample=upsample,
+                           resolution=(2 ** i_layer))
             self.to_rgbs.append(to_rgb)
             num_layers += 2
 
@@ -593,29 +628,29 @@ class Generator(nn.Module):
 
     def forward(
         self,
-        noise,
         latent,
         return_latents=False,
         inject_index=None,
         truncation=1,
         truncation_latent=None,
     ):
-        styles = self.style(noise)
+        styles = self.style(latent)
         inject_index = self.n_latent
 
         if truncation < 1:
             style_t = []
             for style in styles:
                 style_t.append(
-                    truncation_latent + truncation * (style - truncation_latent)
+                    truncation_latent + truncation *
+                    (style - truncation_latent)
                 )
 
             styles = torch.cat(style_t, dim=0)
-        
-        if latent.ndim < 3:
-            latent = latent.unsqueeze(1).repeat(1, inject_index, 1)
-        # else:
-        #     latent = styles
+
+        if styles.ndim < 3:
+            latent = styles.unsqueeze(1).repeat(1, inject_index, 1)
+        else:
+            latent = styles
 
         x = self.input(latent)
         B, C, H, W = x.shape
@@ -624,7 +659,7 @@ class Generator(nn.Module):
         count = 0
         skip = None
         for layer, to_rgb in zip(self.layers, self.to_rgbs):
-            x = layer(x, latent[:,count,:], latent[:,count+1,:])
+            x = layer(x, latent[:, count, :], latent[:, count+1, :])
             b, n, c = x.shape
             h, w = int(math.sqrt(n)), int(math.sqrt(n))
             skip = to_rgb(x.transpose(-1, -2).reshape(b, c, h, w), skip)
@@ -632,7 +667,8 @@ class Generator(nn.Module):
 
         B, L, C = x.shape
         assert L == self.size * self.size
-        x = x.reshape(B, self.size, self.size, C).permute(0, 3, 1, 2).contiguous()
+        x = x.reshape(B, self.size, self.size, C).permute(
+            0, 3, 1, 2).contiguous()
         image = skip
 
         if return_latents:
@@ -649,3 +685,11 @@ class Generator(nn.Module):
         # 8 FC + PixelNorm
         flops += 1 * 10 * self.style_dim * self.style_dim
         return flops
+
+
+if __name__ == "__main__":
+    g = Generator(128, style_dim=512, n_mlp=2, channel_multiplier=2)
+    print(g.flops())
+    x = torch.randn(1, 512)
+    y = g(x)
+    print(y.shape)

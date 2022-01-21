@@ -139,7 +139,8 @@ class Upsample(nn.Module):
         self.pad = (pad0, pad1)
 
     def forward(self, input):
-        out = upfirdn2d(input, self.kernel, up=self.factor, down=1, pad=self.pad)
+        out = upfirdn2d(input, self.kernel, up=self.factor,
+                        down=1, pad=self.pad)
 
         return out
 
@@ -160,7 +161,8 @@ class Downsample(nn.Module):
         self.pad = (pad0, pad1)
 
     def forward(self, input):
-        out = upfirdn2d(input, self.kernel, up=1, down=self.factor, pad=self.pad)
+        out = upfirdn2d(input, self.kernel, up=1,
+                        down=self.factor, pad=self.pad)
 
         return out
 
